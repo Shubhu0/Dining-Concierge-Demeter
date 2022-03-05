@@ -1,17 +1,18 @@
-import boto3
-import datetime
-import dateutil.parser
 import json
-import logging
-import math
 import os
+import math
+import dateutil.parser
+import datetime
 import time
+import logging
+import boto3
 from botocore.vendored import requests
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
 
 
+# Utility function to return slot
 def get_slots(intent_request):
     return intent_request['currentIntent']['slots']
 
@@ -25,7 +26,6 @@ def close(session_attributes, fulfillment_state, message):
             'message': message
         }
     }
-
     return response
 
 
@@ -56,7 +56,7 @@ def elicit_slot(session_attributes, intent_name, slots, slot_to_elicit, message)
     }
 
 
-""" --- Functions that control the bot's behavior --- """
+#Functions that control bot behaviour
 
 
 def isvalid_date(date):
@@ -83,173 +83,194 @@ def delegate(session_attributes, slots):
         }
     }
 
+# Action Functions
 
-def lambda_handler(event, context):
-    # TODO implement
-    os.environ['TZ'] = 'America/New_York'
-    time.tzset()
-    logger.debug('event.bot.name={}'.format(event['bot']['name']))
-    return dispatch(event)
-
-
-def dispatch(intent_request):
-    logger.debug(
-        'dispatch userId={}, intentName={}'.format(intent_request['userId'], intent_request['currentIntent']['name']))
-    intent_name = intent_request['currentIntent']['name']
-    if intent_name == 'GreetingIntent':
-        return greeting_intent(intent_request)
-    elif intent_name == 'DiningSuggestionsIntent':
-        return dining_suggestion_intent(intent_request)
-    elif intent_name == 'ThankYouIntent':
-        return thank_you_intent(intent_request)
-
-    raise Exception('Intent with name ' + intent_name + ' not supported')
-
-
-def greeting_intent(intent_request):
+def Greeting(intent_request):
     return {
         'dialogAction': {
             "type": "ElicitIntent",
             'message': {
                 'contentType': 'PlainText',
-                'content': 'Hi there, how can I help?'}
+                'content': 'Hi there, how can I help you today?'}
         }
     }
 
 
-def thank_you_intent(intent_request):
+def ThankyouIntent(intent_request):
     return {
         'dialogAction': {
             "type": "ElicitIntent",
             'message': {
                 'contentType': 'PlainText',
-                'content': 'You are welcome!'}
+                'content': 'Nice to talk to you! Glad to be of help!'}
         }
     }
 
 
-def validate_dining_suggestion(location, cuisine, num_people, date, time):
-    cuisines = ['italian', 'chinese', 'indian', 'american', 'mexican', 'spanish', 'greek', 'latin', 'Persian']
+def validateIntentSlots(location, cuisine, num_people, date, given_time):
+
+    #Perform basic validations 
+
+    locations = ['new york', 'manhattan']
+    if location is not None and location.lower() not in locations:
+        return build_validation_result(False,
+                                       'location',
+                                       'Sorry! We do not serve recommendations for this location right now!')
+
+    cuisines = ['french', 'indian', 'mexican', 'italian', 'chinese', 'thai','american']
     if cuisine is not None and cuisine.lower() not in cuisines:
         return build_validation_result(False,
-                                       'Cuisine',
-                                       'Cuisine not available. Please try another.')
+                                       'cuisine',
+                                       'We are sorry! We do not serve recommendations for this cuisine right now!')
 
     if num_people is not None:
         num_people = int(num_people)
-        if num_people > 20 or num_people < 0:
+        if num_people > 20 or num_people <= 0:
             return build_validation_result(False,
-                                           'NumberOfPeople',
-                                           'Maximum 20 people allowed. Try again')
+                                           'numPeople',
+                                           'Number of people can only be between 0 and 20')
 
-    if date is not None:
+    if date:
+        # invalid date
         if not isvalid_date(date):
-            return build_validation_result(False, 'Date',
-                                           'I did not understand that, what date would you like to book?')
-        elif datetime.datetime.strptime(date, '%Y-%m-%d').date() <= datetime.date.today():
-            return build_validation_result(False, 'Date', 'You can come tomorrow. What time is suitable?')
+            return build_validation_result(False, 'date', 'I did not understand that, what date would you like to add?')
+        # user entered a date before today
+        elif datetime.datetime.strptime(date, '%Y-%m-%d').date() < datetime.date.today():
+            return build_validation_result(False, 'date',
+                                           'You can search restaurant from today onwards. What day would you like to search?')
 
-    if time is not None:
-        if len(time) != 5:
-            # Not a valid time; use a prompt defined on the build-time model.
-            return build_validation_result(False, 'Time', None)
-
-        hour, minute = time.split(':')
+    if given_time:
+        d = datetime.datetime.now()
+        hour, minute = given_time.split(':')
         hour = parse_int(hour)
         minute = parse_int(minute)
-        if math.isnan(hour) or math.isnan(minute):
-            # Not a valid time; use a prompt defined on the build-time model.
-            return build_validation_result(False, 'Time', 'Not a valid time')
 
-        if hour < 10 or hour > 16:
-            # Outside of business hours
-            return build_validation_result(False, 'Time',
-                                           'Our business hours are from ten a m. to five p m. Can you specify a time during this range?')
+        if math.isnan(hour) or math.isnan(minute):
+            return build_validation_result(False, 'time', 'Not a valid time')
+        if parse_int(d.hour) > hour and d.day == datetime.datetime.strptime(date, '%Y-%m-%d').date().day :
+            return build_validation_result(False,'time','This app does not support time travel :) Please enter a valid time')
 
     return build_validation_result(True, None, None)
 
 
 def dining_suggestion_intent(intent_request):
+    
+    #Suggests restaurants based on the slot values that user gave to LEX.
+
     location = get_slots(intent_request)["Location"]
     cuisine = get_slots(intent_request)["Cuisine"]
     num_people = get_slots(intent_request)["NumberOfPeople"]
     date = get_slots(intent_request)["Date"]
-    time = get_slots(intent_request)["Time"]
-    source = intent_request['invocationSource']
+    given_time = get_slots(intent_request)["Time"]
+    phone = get_slots(intent_request)["Phone"]
+    # phoneId = get_slots(intent_request)["phone"]
+    session_attributes = intent_request['sessionAttributes'] if intent_request['sessionAttributes'] is not None else {}
 
-    if source == 'DialogCodeHook':
+    requestData = {
+        "cuisine": cuisine,
+        "location": location,
+        "limit": "3",
+        "peoplenum": num_people,
+        "Date": date,
+        "Time": given_time,
+        "phone":phone
+    }
+
+    session_attributes['requestData'] = json.dumps(requestData)
+
+    if intent_request['invocationSource'] == 'DialogCodeHook':
         slots = get_slots(intent_request)
 
-        validation_result = validate_dining_suggestion(location, cuisine, num_people, date, time)
-
+        validation_result = validateIntentSlots(location, cuisine, num_people, date, given_time)
+        # If validation fails, elicit the slot again
         if not validation_result['isValid']:
             slots[validation_result['violatedSlot']] = None
-            return elicit_slot(intent_request['sessionAttributes'],
+            print
+            ("elicit slot")
+            return elicit_slot(session_attributes,
                                intent_request['currentIntent']['name'],
                                slots,
                                validation_result['violatedSlot'],
                                validation_result['message'])
+        return delegate(session_attributes, intent_request['currentIntent']['slots'])
 
-        if intent_request[
-            'sessionAttributes'] is not None:
-            output_session_attributes = intent_request['sessionAttributes']
-        else:
-            output_session_attributes = {}
-
-        return delegate(output_session_attributes, get_slots(intent_request))
-
-    # cuisine = get_slots(intent_request)["Cuisine"]
-    email = get_slots(intent_request)["Email"]
-    phone = get_slots(intent_request)["Phone"]
-    sqs = boto3.resource('sqs')
-
-    queue = sqs.get_queue_by_name(QueueName='restraunt_request')
-    msg = {"cuisine": cuisine, "email": email, "phone": phone}
-    response = queue.send_message(MessageBody=json.dumps(msg))
-    # Add Yelp API endpoint to get the data
-    # requestData = {
-    #                 "term":cuisine+", restaurants",
-    #                 "location":location,
-    #                 "categories":cuisine,
-    #                 "limit":"3",
-    #                 "peoplenum": num_people,
-    #               "Date": date,
-    #                 "Time": time
-    #             }
-
-    # resultData = restaurantApiCall(requestData)
+    messageId = sendSQSMessage(requestData)
+    print(messageId)
 
     return close(intent_request['sessionAttributes'],
                  'Fulfilled',
                  {'contentType': 'PlainText',
-                  'content': 'Thank you! You will recieve suggestion shortly'})
+                  'content': 'Got all the data, You will receive recommendation soon.'})
 
 
-def restaurant_api_call(request_data):
-    url = "https://api.yelp.com/v3/businesses/search"
-
-    querystring = request_data
-
-    payload = ""
-    headers = {
-        'Authorization': "Key Error",
-        'cache-control': "no-cache"
+def sendSQSMessage(requestData):
+    # sqs = boto3.client('sqs',region_name='us-west-2')
+    # queue_url = 'https://sqs.us-west-2.amazonaws.com/351860240039/Q1'
+    sqs = boto3.resource('sqs', region_name='us-east-1')
+    queue = sqs.get_queue_by_name(QueueName='queue')
+    messageAttributes = {
+        'Cuisine': {
+            'DataType': 'String',
+            'StringValue': requestData['cuisine']
+        },
+        'Location': {
+            'DataType': 'String',
+            'StringValue': requestData['location']
+        },
+        'Phone': {
+            'DataType': 'Number',
+            'StringValue': requestData['phone']
+        },
+        "DiningTime": {
+            'DataType': "String",
+            'StringValue': requestData['Time']
+        },
+        "DiningDate": {
+            'DataType': "String",
+            'StringValue': requestData['Date']
+        },
+        'PeopleNum': {
+            'DataType': 'Number',
+            'StringValue': requestData['peoplenum']
+        }
     }
+    # mesAtrributes = json.dumps(messageAttributes)
+    messageBody = ('Slots for the Restaurant')
+    # print mesAtrributes
+    print(messageBody)
 
-    response = requests.request("GET", url, data=payload, headers=headers, params=querystring)
+    response = queue.send_message(
+        MessageAttributes=messageAttributes,
+        MessageBody=messageBody
+    )
+    print(response)
 
-    message = json.loads(response.text)
+    return response.get('MessageId')
 
-    if len(message['businesses']) < 0:
-        return 'Unable to find restaurants'
 
-    textString = "Hello! These are my " + request_data['categories'] + " restaurant suggestions for " + request_data[
-        'peoplenum'] + " people, for " + request_data['Date'] + " at " + request_data['Time'] + ". "
-    count = 1
-    for business in message['businesses']:
-        textString = textString + " " + str(count) + "." + business['name'] + ", located at " + business['location'][
-            'address1'] + " "
-        count += 1
+#INTENTS
 
-    textString = textString + " Enjoy your meal!"
-    return textString
+
+def dispatch(intent_request):
+
+    intent_name = intent_request['currentIntent']['name']
+
+    # Dispatch to your bot's intent handlers
+    if intent_name == 'GreetingIntent':
+        return Greeting(intent_request)
+    elif intent_name == 'DiningSuggestionsIntent':
+        return dining_suggestion_intent(intent_request)
+    elif intent_name == 'ThankYouIntent':
+        return ThankyouIntent(intent_request)
+
+    raise Exception('Intent with name ' + intent_name + ' not supported')
+
+
+# Lambda Handler
+
+def lambda_handler(event, context):
+    ''' Send the request to the appropriate intent. '''
+    os.environ['TZ'] = 'America/New_York'
+    time.tzset()
+
+    return dispatch(event)
