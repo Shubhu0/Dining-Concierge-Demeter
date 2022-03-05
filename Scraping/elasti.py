@@ -1,35 +1,50 @@
-import json
 import boto3
-from boto3.dynamodb.conditions import Key
-from botocore.vendored import requests
-
-dynamodb = boto3.resource('dynamodb', region_name='us-east-1')
-table = dynamodb.Table('yelp-restaurants')
-fn = getattr(requests, 'post')
+from elasticsearch import Elasticsearch, RequestsHttpConnection
+from requests_aws4auth import AWS4Auth
 
 
-def send(url, body=None):
-    fn(url, data=body,
-       headers={"Content-Type": "application/json"})
+def put_into_elasticsearch():
+    host = "search-elastic-jjc6x2mv3pknnjhgcl5d4zuv24.us-east-1.es.amazonaws.com"
+    region = "us-east-1"
+    service = "es"
+    credentials = boto3.Session().get_credentials()
+    awsauth = AWS4Auth('AKIAWUV5FAPNQ2GNZUT7', 'iKgN3NZVu4JNa2m/x+Oq6Ws0QN0pzWG0l8IP2pcT', 'us-east-1', service)
 
-def putRequests():
-    resp = table.scan()
-    i = 1
-    url = 'https://search-restaurant-domain-4hjdrkchdqq3by3xorhorx3dlu.us-east-1.es.amazonaws.com/restaurants/restaurant'
-    headers = {"Content-Type": "application/json"}
+    es = Elasticsearch(
+        hosts=[{'host': host, 'port': 443}],
+        http_auth=('root', 'Shubh_1998'),
+        use_ssl=True,
+        verify_certs=True,
+        connection_class=RequestsHttpConnection
+    )
+    dynamodb = boto3.resource('dynamodb',region_name='us-east-1',aws_access_key_id= 'AKIAWUV5FAPNQ2GNZUT7',aws_secret_access_key= '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')
+    table = dynamodb.Table("yelp-restaurants")
+    response = None
     while True:
-        #print(len(resp['Items']))
-        for item in resp['Items']:
-            body = {"RestaurantID": item['insertedAtTimestamp'], "Cuisine": item['cuisine']}
-            r = requests.post(url, data=json.dumps(body).encode("utf-8"), headers=headers)
-            #print(r)
-            i += 1
-            #break;
-        if 'LastEvaluatedKey' in resp:
-            resp = table.scan(
-                ExclusiveStartKey=resp['LastEvaluatedKey']
-            )
-            #break;
+        if response is None:
+            response = table.scan()
         else:
-            break;
-    print(i)
+        
+            response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
+        counter = 0
+        for business in response['Items']:
+            if not response:
+          
+                response = table.scan()
+            restaurantID = business["Business ID"]
+            doc = {
+                "Business ID": restaurantID,
+                "cuisine": business["cuisine"]
+            }
+            es.index(
+                index="restaurants",
+                doc_type="Restaurant",
+                id=restaurantID,
+                body=doc,
+            )
+            check = es.get(index="restaurants", doc_type="Restaurant", id=restaurantID)
+            if check["found"]:
+                print("Index %s succeeded" % restaurantID)
+            counter = counter + 1
+
+put_into_elasticsearch()
