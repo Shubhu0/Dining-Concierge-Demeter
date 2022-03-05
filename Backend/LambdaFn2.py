@@ -72,8 +72,7 @@ def get_restaurant_data(ids):
         else:
             break
     print("db pass" , ans)
-    #print(ans)
-    return ans # string type
+    return ans 
 
 
 def lambda_handler(event=None, context=None):
