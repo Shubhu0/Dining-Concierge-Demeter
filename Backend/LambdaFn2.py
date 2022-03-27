@@ -9,7 +9,7 @@ SEARCH_URL = 'https://search-elastic-jjc6x2mv3pknnjhgcl5d4zuv24.us-east-1.es.ama
 region = "us-east-1"
 service = "es"
 credentials = boto3.Session().get_credentials()
-awsauth = AWS4Auth('AKIAWUV5FAPNQ2GNZUT7', 'iKgN3NZVu4JNa2m/x+Oq6Ws0QN0pzWG0l8IP2pcT', 'us-east-1', service)
+awsauth = AWS4Auth('AWS Key', 'AWS Secret Key', 'us-east-1', service)
 
 sqs = boto3.resource('sqs',region_name='us-east-1')
 es = Elasticsearch(SEARCH_URL, http_auth=('root', 'Shubh_1998'), connection_class=RequestsHttpConnection)
